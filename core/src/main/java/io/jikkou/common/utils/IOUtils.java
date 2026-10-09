@@ -6,9 +6,8 @@
  */
 package io.jikkou.common.utils;
 
-import com.typesafe.config.Config;
-import com.typesafe.config.ConfigFactory;
 import io.jikkou.core.exceptions.InvalidResourceFileException;
+import io.jikkou.core.io.HttpAuthenticator;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -24,9 +23,7 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
-import java.util.Base64;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Stream;
 import org.jetbrains.annotations.NotNull;
 
@@ -187,73 +184,10 @@ public final class IOUtils {
                 return new BufferedInputStream(url.openStream());
             }
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-            resolveBasicAuth(url.getHost()).ifPresent(credentials ->
-                    connection.setRequestProperty("Authorization", "Basic " + credentials));
+            HttpAuthenticator.get().authenticate(connection);
             return new BufferedInputStream(connection.getInputStream());
         } catch (IOException e) {
             throw new RuntimeException(e);
-        }
-    }
-
-    private static final String HTTP_AUTHENTICATIONS_PATH = "jikkou.io.http.authentications";
-
-    private static volatile Config httpAuthConfig;
-
-    /**
-     * Resolves the Base64-encoded Basic credentials configured for the given host, if any.
-     *
-     * <p>Credentials are read from the {@code jikkou.io.http.authentications} configuration list,
-     * loaded lazily through a raw {@link ConfigFactory#load()} call. {@code JikkouConfig} is
-     * deliberately not used here to avoid logging the resolved configuration (which may contain
-     * secrets) when this code path executes.
-     *
-     * @param host the host to look up (exact, case-insensitive match).
-     * @return the Base64-encoded {@code username:password} credentials, or empty.
-     */
-    private static Optional<String> resolveBasicAuth(final String host) {
-        Config config = httpAuthConfig();
-        if (!config.hasPath(HTTP_AUTHENTICATIONS_PATH)) {
-            return Optional.empty();
-        }
-        for (Config entry : config.getConfigList(HTTP_AUTHENTICATIONS_PATH)) {
-            if (!entry.hasPath("host") || !entry.getString("host").equalsIgnoreCase(host)) {
-                continue;
-            }
-            if (!entry.hasPath("username") || !entry.hasPath("password")) {
-                String missingKey = entry.hasPath("username") ? "password" : "username";
-                throw new RuntimeException(String.format(
-                        "Invalid configuration: entry for host '%s' in '%s' is missing key '%s'. "
-                                + "If the value comes from an environment variable (e.g. ${?VAR}), "
-                                + "make sure that variable is set.",
-                        host, HTTP_AUTHENTICATIONS_PATH, missingKey));
-            }
-            String credentials = entry.getString("username") + ":" + entry.getString("password");
-            return Optional.of(Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8)));
-        }
-        return Optional.empty();
-    }
-
-    private static Config httpAuthConfig() {
-        Config result = httpAuthConfig;
-        if (result == null) {
-            synchronized (IOUtils.class) {
-                result = httpAuthConfig;
-                if (result == null) {
-                    result = ConfigFactory.load();
-                    httpAuthConfig = result;
-                }
-            }
-        }
-        return result;
-    }
-
-    /**
-     * Resets the cached configuration used for HTTP authentication. Visible for testing only.
-     */
-    static void resetHttpAuthConfig() {
-        synchronized (IOUtils.class) {
-            httpAuthConfig = null;
-            ConfigFactory.invalidateCaches();
         }
     }
 }
