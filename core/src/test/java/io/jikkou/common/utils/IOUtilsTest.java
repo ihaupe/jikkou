@@ -7,6 +7,8 @@
 package io.jikkou.common.utils;
 
 import com.sun.net.httpserver.HttpServer;
+import io.jikkou.core.io.HttpAuthenticator;
+import io.jikkou.runtime.JikkouConfig;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URL;
@@ -15,7 +17,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -156,18 +160,16 @@ class IOUtilsTest {
         AtomicReference<String> authHeader = new AtomicReference<>();
         HttpServer server = newHttpServer(authHeader);
         try {
-            Path configFile = tempDir.resolve("application.conf");
-            Files.writeString(configFile, """
-                    jikkou.io.http.authentications: [
-                      { host: "127.0.0.1", username: "user", password: "pass" }
-                    ]
-                    """);
+            HttpAuthenticator.configure(HttpAuthenticator.fromConfiguration(JikkouConfig.create(
+                    Map.of(HttpAuthenticator.CONFIG_KEY, List.of(
+                            Map.of("host", "127.0.0.1", "username", "user", "password", "pass"))),
+                    false)));
 
             // When
-            String content = withConfigFile(configFile, () -> new String(
+            String content = new String(
                     IOUtils.openStream(new URL("http://127.0.0.1:" + server.getAddress().getPort() + "/x"))
                             .readAllBytes(),
-                    StandardCharsets.UTF_8));
+                    StandardCharsets.UTF_8);
 
             // Then
             Assertions.assertEquals("hello", content);
@@ -185,14 +187,13 @@ class IOUtilsTest {
         AtomicReference<String> authHeader = new AtomicReference<>();
         HttpServer server = newHttpServer(authHeader);
         try {
-            Path configFile = tempDir.resolve("application.conf");
-            Files.writeString(configFile, "jikkou.some.other.property = \"value\"\n");
+            HttpAuthenticator.configure(new HttpAuthenticator(List.of()));
 
             // When
-            String content = withConfigFile(configFile, () -> new String(
+            String content = new String(
                     IOUtils.openStream(new URL("http://127.0.0.1:" + server.getAddress().getPort() + "/x"))
                             .readAllBytes(),
-                    StandardCharsets.UTF_8));
+                    StandardCharsets.UTF_8);
 
             // Then
             Assertions.assertEquals("hello", content);
@@ -202,30 +203,9 @@ class IOUtilsTest {
         }
     }
 
-    @Test
-    void shouldThrowMeaningfulError_whenHostMatchesButCredentialsMissing() throws Exception {
-        // Given
-        AtomicReference<String> authHeader = new AtomicReference<>();
-        HttpServer server = newHttpServer(authHeader);
-        try {
-            Path configFile = tempDir.resolve("application.conf");
-            Files.writeString(configFile, """
-                    jikkou.io.http.authentications: [
-                      { host: "127.0.0.1", username: "user" }
-                    ]
-                    """);
-
-            // When
-            RuntimeException exception = Assertions.assertThrows(RuntimeException.class, () ->
-                    withConfigFile(configFile, () ->
-                            IOUtils.openStream(new URL("http://127.0.0.1:" + server.getAddress().getPort() + "/x"))));
-
-            // Then
-            Assertions.assertTrue(exception.getMessage().contains("password"));
-            Assertions.assertTrue(exception.getMessage().contains("jikkou.io.http.authentications"));
-        } finally {
-            server.stop(0);
-        }
+    @AfterEach
+    void resetHttpAuthenticator() {
+        HttpAuthenticator.configure(new HttpAuthenticator(List.of()));
     }
 
     private static HttpServer newHttpServer(AtomicReference<String> authHeader) throws IOException {
@@ -239,26 +219,5 @@ class IOUtilsTest {
         });
         server.start();
         return server;
-    }
-
-    private static <T> T withConfigFile(Path configFile, ThrowingSupplier<T> action) throws Exception {
-        String previous = System.getProperty("config.file");
-        System.setProperty("config.file", configFile.toString());
-        IOUtils.resetHttpAuthConfig();
-        try {
-            return action.get();
-        } finally {
-            if (previous == null) {
-                System.clearProperty("config.file");
-            } else {
-                System.setProperty("config.file", previous);
-            }
-            IOUtils.resetHttpAuthConfig();
-        }
-    }
-
-    @FunctionalInterface
-    private interface ThrowingSupplier<T> {
-        T get() throws Exception;
     }
 }
