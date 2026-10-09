@@ -59,9 +59,13 @@ public final class HttpAuthenticator {
     /**
      * Creates a new {@link HttpAuthenticator} from the given configuration.
      *
-     * <p>Entries are parsed and validated eagerly: an entry missing the {@code host},
-     * {@code username} or {@code password} key (e.g. because a referenced environment
-     * variable is not set) results in a {@link JikkouRuntimeException} naming the missing key.
+     * <p>Entries are parsed eagerly, but credentials are only validated when a connection
+     * actually targets a matching host (see {@link #authenticate(HttpURLConnection)}). This
+     * allows credentials to come from optional environment variable substitutions
+     * (e.g. {@code ${?VAR}}): a command that never fetches from a configured host is not
+     * affected by missing variables.
+     *
+     * <p>Entries without a {@code host} key can never match and are ignored.
      *
      * @param config the configuration.
      * @return a new {@link HttpAuthenticator} instance.
@@ -71,21 +75,11 @@ public final class HttpAuthenticator {
             return new HttpAuthenticator(List.of());
         }
         List<HostCredentials> entries = config.getConfigList(CONFIG_KEY).stream()
-                .map(entry -> {
-                    for (String key : List.of("host", "username", "password")) {
-                        if (!entry.hasKey(key)) {
-                            throw new JikkouRuntimeException(String.format(
-                                    "Invalid configuration: an entry in '%s' is missing key '%s'. "
-                                            + "If the value comes from an environment variable "
-                                            + "(e.g. ${?VAR}), make sure that variable is set.",
-                                    CONFIG_KEY, key));
-                        }
-                    }
-                    return new HostCredentials(
-                            entry.getString("host"),
-                            entry.getString("username"),
-                            entry.getString("password"));
-                })
+                .filter(entry -> entry.hasKey("host"))
+                .map(entry -> new HostCredentials(
+                        entry.getString("host"),
+                        entry.hasKey("username") ? entry.getString("username") : null,
+                        entry.hasKey("password") ? entry.getString("password") : null))
                 .toList();
         return new HttpAuthenticator(entries);
     }
@@ -113,12 +107,22 @@ public final class HttpAuthenticator {
      * are configured for the connection's host. Otherwise, the connection is left untouched.
      *
      * @param connection the connection to authenticate.
+     * @throws JikkouRuntimeException if the connection's host matches an entry with missing
+     *         credentials (e.g. because a referenced environment variable is not set).
      */
     public void authenticate(@NotNull final HttpURLConnection connection) {
         entries.stream()
                 .filter(entry -> entry.host().equalsIgnoreCase(connection.getURL().getHost()))
                 .findFirst()
                 .ifPresent(entry -> {
+                    if (entry.username() == null || entry.password() == null) {
+                        String missingKey = entry.username() == null ? "username" : "password";
+                        throw new JikkouRuntimeException(String.format(
+                                "Invalid configuration: the entry for host '%s' in '%s' is missing key '%s'. "
+                                        + "If the value comes from an environment variable "
+                                        + "(e.g. ${?VAR}), make sure that variable is set.",
+                                entry.host(), CONFIG_KEY, missingKey));
+                    }
                     String credentials = entry.username() + ":" + entry.password();
                     String encoded = Base64.getEncoder()
                             .encodeToString(credentials.getBytes(StandardCharsets.UTF_8));

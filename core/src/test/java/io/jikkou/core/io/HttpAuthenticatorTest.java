@@ -8,6 +8,8 @@ package io.jikkou.core.io;
 
 import io.jikkou.core.exceptions.JikkouRuntimeException;
 import io.jikkou.runtime.JikkouConfig;
+import java.net.HttpURLConnection;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
@@ -49,16 +51,18 @@ class HttpAuthenticatorTest {
     }
 
     @Test
-    void shouldThrowMeaningfulError_whenEntryMissesCredentials() {
+    void shouldThrowMeaningfulError_whenHostMatchesButCredentialsMissing() throws Exception {
         // Given
-        JikkouConfig config = JikkouConfig.create(
+        HttpAuthenticator authenticator = HttpAuthenticator.fromConfiguration(JikkouConfig.create(
                 Map.of(HttpAuthenticator.CONFIG_KEY, List.of(
                         Map.of("host", "repo.example.com", "username", "user"))),
-                false);
+                false));
+        HttpURLConnection connection =
+                (HttpURLConnection) URI.create("http://repo.example.com/schema.avsc").toURL().openConnection();
 
         // When
         JikkouRuntimeException exception = Assertions.assertThrows(
-                JikkouRuntimeException.class, () -> HttpAuthenticator.fromConfiguration(config));
+                JikkouRuntimeException.class, () -> authenticator.authenticate(connection));
 
         // Then
         Assertions.assertTrue(exception.getMessage().contains("password"));

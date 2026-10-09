@@ -7,6 +7,7 @@
 package io.jikkou.common.utils;
 
 import com.sun.net.httpserver.HttpServer;
+import io.jikkou.core.exceptions.JikkouRuntimeException;
 import io.jikkou.core.io.HttpAuthenticator;
 import io.jikkou.runtime.JikkouConfig;
 import java.io.IOException;
@@ -198,6 +199,29 @@ class IOUtilsTest {
             // Then
             Assertions.assertEquals("hello", content);
             Assertions.assertNull(authHeader.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldThrowMeaningfulError_whenHostMatchesButCredentialsMissing() throws Exception {
+        // Given
+        AtomicReference<String> authHeader = new AtomicReference<>();
+        HttpServer server = newHttpServer(authHeader);
+        try {
+            HttpAuthenticator.configure(HttpAuthenticator.fromConfiguration(JikkouConfig.create(
+                    Map.of(HttpAuthenticator.CONFIG_KEY, List.of(
+                            Map.of("host", "127.0.0.1", "username", "user"))),
+                    false)));
+
+            // When
+            JikkouRuntimeException exception = Assertions.assertThrows(JikkouRuntimeException.class, () ->
+                    IOUtils.openStream(new URL("http://127.0.0.1:" + server.getAddress().getPort() + "/x")));
+
+            // Then
+            Assertions.assertTrue(exception.getMessage().contains("password"));
+            Assertions.assertTrue(exception.getMessage().contains(HttpAuthenticator.CONFIG_KEY));
         } finally {
             server.stop(0);
         }
